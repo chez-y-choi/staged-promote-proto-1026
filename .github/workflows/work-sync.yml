@@ -1,0 +1,38 @@
+# 시험: SP work-sync 재현 — work push → work→develop PR 을 봇이 즉시 머지(merge commit)
+# → develop→main PR 이 없으면 연다. SP 현행은 여기서 게이트를 dispatch 하지만, 새 방식은 PR 열기만.
+# (봇 토큰 머지의 develop push 는 워크플로우를 안 깨우므로 dev-push 대신 여기서 PR 을 연다)
+name: work-sync
+on:
+  push:
+    branches: [work]
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: work-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: |
+          set -euo pipefail
+          ahead="$(gh api "repos/$GH_REPO/compare/develop...work" --jq .ahead_by)"
+          echo "work ahead of develop: $ahead"
+          if [ "$ahead" -gt 0 ]; then
+            n="$(gh pr list --base develop --head work --state open --json number --jq '.[0].number // ""')"
+            if [ -z "$n" ]; then
+              n="$(gh pr create --base develop --head work --title "work → develop" --body "자동 반영(시험)" | grep -o '[0-9]*$')"
+            fi
+            gh pr merge "$n" --merge --subject "Merge work into develop" --body "work-sync (시험)"
+          fi
+          m="$(gh pr list --base main --head develop --state open --json number --jq '.[0].number // ""')"
+          ahead_main="$(gh api "repos/$GH_REPO/compare/main...develop" --jq .ahead_by)"
+          if [ -z "$m" ] && [ "$ahead_main" -gt 0 ]; then
+            gh pr create --base main --head develop --title "develop → main" --body "상용 반영 대기 PR (시험). Approve 하면 그 커밋으로 검사 후 머지."
+          else
+            echo "main PR: ${m:-없음} / develop ahead of main: $ahead_main"
+          fi
