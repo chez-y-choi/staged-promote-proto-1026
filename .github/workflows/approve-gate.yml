@@ -1,0 +1,58 @@
+# 시험: 관리자 Approve 순간에만 빌드 + AI 리뷰(스텁) → 통과하면 승인한 커밋으로 고정 머지
+name: approve-gate
+on:
+  pull_request_review:
+    types: [submitted]
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: approve-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  guard:
+    if: >-
+      github.event.review.state == 'approved' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.ref == 'develop'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.s.outputs.sha }}
+    steps:
+      - id: s
+        env:
+          REVIEW_SHA: ${{ github.event.review.commit_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "review.commit_id=$REVIEW_SHA head.sha=$HEAD_SHA github.sha=$GITHUB_SHA"
+          if [ "$REVIEW_SHA" != "$HEAD_SHA" ]; then
+            echo "::error::승인한 커밋이 PR 최신 커밋이 아님 — 다시 승인 필요"; exit 1
+          fi
+          echo "sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+  release-build:
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
+      - run: |
+          test -f index.html && grep -o 'version: v[0-9]*' index.html
+          echo "레이스 시험용 대기 30s"; sleep 30
+  release-ai-review:
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "AI 리뷰 스텁 — APPROVE"
+  merge:
+    needs: [guard, release-build, release-ai-review]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ needs.guard.outputs.sha }}
+    steps:
+      - run: |
+          gh pr view "$PR" --json headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup
+          gh pr merge "$PR" --merge --match-head-commit "$SHA" --subject "Release $SHA" --body "Approve 시점 커밋 고정 머지 (시험)"
