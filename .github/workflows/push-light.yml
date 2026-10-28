@@ -14,7 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: test -f index.html && grep -o 'version: v[0-9]*' index.html
+      - run: |
+          test -f index.html && grep -o 'version: v[0-9]*' index.html
   open-pr:
     needs: dev-build
     runs-on: ubuntu-latest
