@@ -1,0 +1,31 @@
+# 시험: develop push 마다 가벼운 빌드만 + develop→main PR 이 없으면 연다 (AI 리뷰 없음)
+name: dev-push
+on:
+  push:
+    branches: [develop]
+permissions:
+  contents: read
+  pull-requests: write
+concurrency:
+  group: dev-push
+  cancel-in-progress: true
+jobs:
+  dev-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: test -f index.html && grep -o 'version: v[0-9]*' index.html
+  open-pr:
+    needs: dev-build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: |
+          n="$(gh pr list --base main --head develop --state open --json number --jq '.[0].number // ""')"
+          if [ -z "$n" ]; then
+            gh pr create --base main --head develop --title "develop → main" --body "상용 반영 대기 PR (시험). Approve 하면 그 커밋으로 검사 후 머지."
+          else
+            echo "PR #$n 이미 열림"
+          fi
